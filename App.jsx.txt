@@ -1,0 +1,410 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Sparkles, Download, Trash2, AlertCircle, Copy, Image as ImageIcon, X, Wand2, Dice5 } from 'lucide-react';
+
+// --- API Configuration & Helpers ---
+
+const API_KEY = ""; // System provides this at runtime
+
+const generateImageAPI = async (prompt) => {
+  const model = "imagen-4.0-generate-001";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${API_KEY}`;
+
+  const payload = {
+    instances: [{ prompt: prompt }],
+    parameters: { sampleCount: 1 }
+  };
+
+  const delays = [1000, 2000, 4000, 8000, 16000];
+  
+  for (let i = 0; i <= delays.length; i++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const result = await response.json();
+      
+      if (result.predictions?.[0]?.bytesBase64Encoded) {
+        return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+      } else {
+        throw new Error("Invalid response format from API");
+      }
+
+    } catch (error) {
+      if (i === delays.length) throw error;
+      await new Promise(resolve => setTimeout(resolve, delays[i]));
+    }
+  }
+};
+
+const generateTextAPI = async (userPrompt, systemPrompt) => {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+  
+  const payload = {
+    contents: [{ parts: [{ text: userPrompt }] }],
+    systemInstruction: { parts: [{ text: systemPrompt }] }
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) throw new Error("Text generation failed");
+
+    const result = await response.json();
+    return result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  } catch (error) {
+    console.error("LLM Error:", error);
+    throw error;
+  }
+};
+
+// --- Components ---
+
+const Header = () => (
+  <header className="flex items-center justify-between py-6 px-4 md:px-8 border-b border-slate-800 bg-slate-950/50 backdrop-blur-md sticky top-0 z-50">
+    <div className="flex items-center gap-2">
+      <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
+        <Sparkles className="w-6 h-6 text-white" />
+      </div>
+      <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+        DreamCanvas
+      </h1>
+    </div>
+    <div className="text-xs font-medium px-3 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+      Gemini Powered
+    </div>
+  </header>
+);
+
+const LoadingSpinner = () => (
+  <div className="flex flex-col items-center justify-center py-12 animate-in fade-in duration-500">
+    <div className="relative">
+      <div className="w-16 h-16 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Sparkles className="w-6 h-6 text-purple-400 animate-pulse" />
+      </div>
+    </div>
+    <p className="mt-4 text-slate-400 font-medium animate-pulse">Dreaming up your masterpiece...</p>
+  </div>
+);
+
+const ImageCard = ({ image, onDelete }) => {
+  const [isHovered, setIsHovered] = useState(false);
+
+  const handleDownload = () => {
+    const link = document.createElement('a');
+    link.href = image.url;
+    link.download = `dreamcanvas-${image.id}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCopyPrompt = () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = image.prompt;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  };
+
+  return (
+    <div 
+      className="group relative rounded-xl overflow-hidden bg-slate-800 border border-slate-700 shadow-xl transition-all duration-300 hover:shadow-purple-500/20 hover:border-purple-500/50"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div className="aspect-square w-full relative overflow-hidden bg-slate-900">
+        <img 
+          src={image.url} 
+          alt={image.prompt} 
+          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+        />
+        
+        <div className={`absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/50 to-transparent transition-opacity duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
+          <div className="absolute bottom-0 left-0 right-0 p-4 flex flex-col gap-3">
+            <p className="text-sm text-white line-clamp-2 font-medium">{image.prompt}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <button 
+                onClick={handleDownload}
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                title="Download Image"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={handleCopyPrompt}
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                title="Copy Prompt"
+              >
+                <Copy className="w-4 h-4" />
+              </button>
+              <div className="flex-1"></div>
+              <button 
+                onClick={() => onDelete(image.id)}
+                className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
+                title="Delete"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const EmptyState = () => (
+  <div className="flex flex-col items-center justify-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-2xl bg-slate-900/30">
+    <div className="bg-slate-800 p-4 rounded-full mb-4">
+      <ImageIcon className="w-8 h-8 text-slate-600" />
+    </div>
+    <h3 className="text-lg font-medium text-slate-300 mb-1">No images yet</h3>
+    <p className="text-sm max-w-xs text-center">Enter a prompt above to generate your first AI masterpiece.</p>
+  </div>
+);
+
+export default function App() {
+  const [prompt, setPrompt] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [textLoading, setTextLoading] = useState(false); // Separate loading state for LLM ops
+  const [error, setError] = useState(null);
+  const [images, setImages] = useState([]);
+  const inputRef = useRef(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!prompt.trim() || loading || textLoading) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const imageUrl = await generateImageAPI(prompt);
+      const newImage = {
+        id: Date.now().toString(),
+        url: imageUrl,
+        prompt: prompt.trim(),
+        timestamp: Date.now()
+      };
+      setImages(prev => [newImage, ...prev]);
+      setPrompt(''); 
+    } catch (err) {
+      console.error("Generation failed:", err);
+      setError("Failed to generate image. The AI might be busy or the prompt was filtered. Please try again.");
+    } finally {
+      setLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  };
+
+  // Feature 1: Enhance Prompt using Gemini LLM
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim() || textLoading) return;
+    setTextLoading(true);
+    setError(null);
+    
+    try {
+      const systemPrompt = "You are an expert AI art prompt engineer. Your goal is to take a user's basic idea and rewrite it into a detailed, descriptive prompt suitable for generating high-quality images. Focus on lighting, style, texture, and mood. Keep it under 40 words. Do not wrap in quotes.";
+      const enhanced = await generateTextAPI(prompt, systemPrompt);
+      setPrompt(enhanced.trim());
+    } catch (err) {
+      setError("Failed to enhance prompt. Please try again.");
+    } finally {
+      setTextLoading(false);
+    }
+  };
+
+  // Feature 2: Surprise Me using Gemini LLM
+  const handleSurpriseMe = async () => {
+    if (textLoading) return;
+    setTextLoading(true);
+    setError(null);
+
+    try {
+      const systemPrompt = "Generate a single, creative, highly visual, and detailed text prompt for an AI image generator. It should be imaginative and unique. Output ONLY the prompt text, no conversational filler.";
+      const surprise = await generateTextAPI("Generate a random art prompt", systemPrompt);
+      setPrompt(surprise.trim());
+    } catch (err) {
+      setError("Failed to generate surprise prompt. Please try again.");
+    } finally {
+      setTextLoading(false);
+    }
+  };
+
+  const handleDelete = (id) => setImages(prev => prev.filter(img => img.id !== id));
+
+  const handleClearAll = () => {
+    if (window.confirm("Are you sure you want to clear all generated images?")) {
+      setImages([]);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-purple-500/30">
+      <Header />
+
+      <main className="container mx-auto px-4 md:px-8 max-w-6xl pb-20">
+        
+        <section className="py-12 md:py-20 flex flex-col items-center">
+          <div className="w-full max-w-3xl">
+            <h2 className="text-4xl md:text-5xl font-bold text-center mb-8 bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
+              Turn words into art.
+            </h2>
+            
+            <form onSubmit={handleSubmit} className="relative group">
+              <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500"></div>
+              <div className="relative bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden focus-within:border-purple-500/50 transition-colors">
+                
+                {/* Main Input Area */}
+                <div className="flex items-center">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Describe what you want to see..."
+                    className="w-full bg-transparent px-6 py-5 text-lg text-white placeholder-slate-500 focus:outline-none"
+                    disabled={loading || textLoading}
+                  />
+                  <div className="pr-2">
+                    <button
+                      type="submit"
+                      disabled={!prompt.trim() || loading || textLoading}
+                      className={`
+                        flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all duration-200
+                        ${!prompt.trim() || loading || textLoading
+                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                          : 'bg-white text-slate-950 hover:bg-purple-50 shadow-lg shadow-purple-500/20 hover:scale-105'}
+                      `}
+                    >
+                      {loading ? (
+                        <span className="flex items-center gap-2">
+                          <span className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin"></span>
+                          <span>Creating</span>
+                        </span>
+                      ) : (
+                        <>
+                          <span>Generate</span>
+                          <Sparkles className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* AI Tools Bar */}
+                <div className="px-6 py-2 bg-slate-950/30 border-t border-slate-800 flex items-center gap-3 overflow-x-auto">
+                   <button
+                    type="button"
+                    onClick={handleEnhancePrompt}
+                    disabled={!prompt.trim() || textLoading || loading}
+                    className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 border border-purple-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {textLoading && prompt.trim() ? (
+                      <span className="w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Wand2 className="w-3 h-3" />
+                    )}
+                    ✨ Enhance Prompt
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSurpriseMe}
+                    disabled={textLoading || loading}
+                    className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 border border-indigo-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {textLoading && !prompt.trim() ? (
+                      <span className="w-3 h-3 border-2 border-indigo-300 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Dice5 className="w-3 h-3" />
+                    )}
+                    ✨ Surprise Me
+                  </button>
+                  
+                  <div className="flex-1"></div>
+                  <span className="text-xs text-slate-500 hidden sm:block">Powered by Gemini LLM</span>
+                </div>
+
+              </div>
+            </form>
+
+            {/* Suggestions (only show if empty history and no loading) */}
+            {!images.length && !loading && !prompt && (
+              <div className="mt-6 text-center animate-in fade-in zoom-in duration-500">
+                <p className="text-sm text-slate-500 mb-3">Or try these:</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {[
+                    "A futuristic treehouse",
+                    "Cat astronaut",
+                    "Low poly room"
+                  ].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      onClick={() => setPrompt(suggestion)}
+                      className="text-xs px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700 hover:border-purple-500/50 hover:bg-slate-800 transition-colors text-slate-400 hover:text-purple-300"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {error && (
+          <div className="mb-8 mx-auto max-w-3xl p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 text-red-400 animate-in slide-in-from-top-2">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p>{error}</p>
+            <button onClick={() => setError(null)} className="ml-auto hover:text-red-300">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {loading && <LoadingSpinner />}
+
+        {images.length > 0 && (
+          <div className="animate-in slide-in-from-bottom-4 duration-700">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                <ImageIcon className="w-5 h-5 text-purple-400" />
+                Your Creations
+              </h3>
+              <button 
+                onClick={handleClearAll}
+                className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+              >
+                Clear History
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {images.map((img) => (
+                <ImageCard key={img.id} image={img} onDelete={handleDelete} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!loading && images.length === 0 && !error && (
+          <div className="max-w-md mx-auto mt-8">
+            <EmptyState />
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
